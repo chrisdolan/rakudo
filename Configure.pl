@@ -21,18 +21,22 @@ if ($options{'help'}) {
     exit(0);
 }
 
+#  Work out slash character to use.
+my $slash = $^O eq 'MSWin32' ? '\\' : '/';
+
 #  If we're in a Parrot build tree and --parrot-config isn't
 #  specified, use the build tree's reconfigure.pl and exit.
-if (!$options{'parrot-config'} && -e "../../tools/dev/reconfigure.pl") {
-    print "Building Makefile with ../../tools/dev/reconfigure.pl\n";
-    chdir '../..';
-    `$^X -Ilib tools/dev/reconfigure.pl --step=gen::languages --languages=rakudo`;
-    done();
-}
+# if (!$options{'parrot-config'} && -e "../../tools/dev/reconfigure.pl") {
+#     print "Building Makefile with ../../tools/dev/reconfigure.pl\n";
+#     chdir '../..';
+#     `$^X -Ilib tools/dev/reconfigure.pl --step=gen::languages --languages=rakudo`;
+#     done();
+# }
 
 
 #  Get a list of parrot-configs to invoke.
-my @parrot_config_exe = qw(parrot/parrot_config parrot_config);
+my @parrot_config_exe = 
+    ("parrot${slash}parrot_config", "parrot_config", "..${slash}..${slash}parrot_config");
 if ($options{'parrot-config'} && $options{'parrot-config'} ne '1') {
     @parrot_config_exe = ($options{'parrot-config'});
 }
@@ -78,7 +82,7 @@ sub read_parrot_config {
                 if (/(\w+) => '(.*)'/) { $config{$1} = $2 }
             }
             close $PARROT_CONFIG;
-            last;
+            last if %config;
         }
     }
     %config;
@@ -88,16 +92,15 @@ sub read_parrot_config {
 #  Generate a Makefile from a configuration
 sub create_makefile {
     my %config = @_;
-    open my $ROOTIN, "<config/makefiles/root.in" or
-        die "Unable to read config/makefiles/root.in \n";
+    open my $ROOTIN, "<build/Makefile.in" or
+        die "Unable to read build/Makefile.in \n";
     my $maketext = join('', <$ROOTIN>);
     close $ROOTIN;
-    $maketext =~ s{//}{/}g;
     $maketext =~ s/@(\w+)@/$config{$1}/g;
 
     print "Creating Makefile\n";
     open(MAKEFILE, ">Makefile") ||
-        die "Unable to read config/makefiles/root.in \n";
+        die "Unable to write Makefile\n";
     print MAKEFILE $maketext;
     close(MAKEFILE);
 }
