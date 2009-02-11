@@ -215,6 +215,14 @@ to the Perl 6 compiler.
     .return (list)
 .end
 
+.sub 'invoke' :vtable :method
+    .local pmc compiler, invokable, res
+    compiler = compreg 'Perl6'
+    $S0 = self
+    invokable = compiler.'compile'($S0)
+    res = invokable()
+    .return ()
+.end
 
 .include 'src/gen_grammar.pir'
 .include 'src/parser/expression.pir'
