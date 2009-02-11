@@ -480,8 +480,8 @@ rule post_constraint {
 }
 
 token param_var {
-    <sigil> <twigil>? <identifier>
-    {*}
+    | <sigil> <twigil>? <identifier>              {*}  #= identifier
+    | $<sym>=[ '$/' | '$!' | '$¢' ] <!before \w> {*}  #= special_variable
 }
 
 token parameter {

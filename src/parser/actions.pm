@@ -1261,24 +1261,36 @@ method parameter($/) {
 }
 
 
-method param_var($/) {
-    my $sigil  := ~$<sigil>;
-    my $twigil := ~$<twigil>[0];
-    if $sigil eq '&' { $sigil := ''; }
-    my $name := $sigil ~ $twigil ~ ~$<identifier>;
-    if $twigil eq '.' {
-        $name := $sigil ~ '!' ~ $<identifier>;
+method param_var($/, $key) {
+    my $name;
+    my $var;
+
+    if $key eq 'special_variable' {
+        # Treat $/, $_, etc. specially
+
+        $name := ~$/;
+        $var := PAST::Var.new( :node($/), :name($name), :scope('parameter') );
+
+    } else {
+        my $sigil  := ~$<sigil>;
+        my $twigil := ~$<twigil>[0];
+        if $sigil eq '&' { $sigil := ''; }
+        $name := $sigil ~ $twigil ~ ~$<identifier>;
+        if $twigil eq '.' {
+            $name := $sigil ~ '!' ~ $<identifier>;
+        }
+        elsif $twigil && $twigil ne '!' {
+            $/.panic('Invalid twigil used in signature parameter.');
+        }
+        $var := PAST::Var.new(
+            :name($name),
+            :scope('parameter'),
+            :node($/)
+        );
+        $var<twigil> := $twigil;
+        $var<itype>  := container_itype( $<sigil> );
     }
-    elsif $twigil && $twigil ne '!' {
-        $/.panic('Invalid twigil used in signature parameter.');
-    }
-    my $var := PAST::Var.new(
-        :name($name),
-        :scope('parameter'),
-        :node($/)
-    );
-    $var<twigil> := $twigil;
-    $var<itype>  := container_itype( $<sigil> );
+
     # Declare symbol as lexical in current (signature) block.
     # This is needed in case any post_constraints try to reference
     # this new param_var.
