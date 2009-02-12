@@ -324,6 +324,16 @@ method pblock($/) {
         $block[0].push(
             PAST::Op.new( :pasttype('call'), :name('!SIGNATURE_BIND') )
         );
+        if $<lambda>[0] eq '<->' {
+            $block.loadinit().push(PAST::Op.new(
+                :pasttype('callmethod'),
+                :name('!make_parameters_rw'),
+                PAST::Var.new(
+                    :name('signature'),
+                    :scope('register')
+                )
+            ));
+        }
     }
     make $block;
 }
@@ -1082,9 +1092,12 @@ method signature($/, $key) {
             my $sigparam := PAST::Op.new( :pasttype('callmethod'),
                                 :name('!add_param'), $sigobj, $name );
 
-            ##  if it's named, note that in the signature object
+            ##  if it's named or optional, note that in the signature object
             if $var.named() ne "" {
                 $sigparam.push(PAST::Val.new( :value($var.named()), :named('named') ));
+            }
+            if $var.viviself() {
+                $sigparam.push(PAST::Val.new( :value(1), :named('optional') ));
             }
 
             ##  add any typechecks
@@ -1101,14 +1114,16 @@ method signature($/, $key) {
                 $sigparam.push($trait);
             }
 
-            my $readtype := trait_readtype( $var<traitlist> ) || 'readonly';
+            my $readtype := trait_readtype( $var<traitlist> );
             if $readtype eq 'CONFLICT' {
                 $<parameter>[$i].panic(
                     "Can use only one of readonly, rw, and copy on "
                     ~ $name ~ " parameter"
                 );
             }
-            $sigparam.push(PAST::Val.new(:value($readtype),:named('readtype')));
+            if $readtype {
+                $sigparam.push(PAST::Val.new(:value($readtype),:named('readtype')));
+            }
 
             ##  if it's an invocant, flag it as such and make the var be a
             ##  lexical that has self register bound to it
@@ -1639,6 +1654,11 @@ method package_def($/, $key) {
         if $/.type_redeclaration() {
             $/.panic("Re-declaration of type " ~ ~$<module_name>[0]);
         }
+    }
+
+    ##  If it is an "is also", check that the type did already exist.
+    if $block<isalso> && !$/.type_redeclaration() {
+        $/.panic("Cannot use 'is also' on non-existent class " ~ ~$<module_name>[0]);
     }
 
     #  At the beginning, create the "class/module/grammar/role/etc"

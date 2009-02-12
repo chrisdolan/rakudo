@@ -30,23 +30,27 @@ src/builtins/op.pir - Perl 6 builtin operators
 ## autoincrement
 .sub 'postfix:++' :multi(_)
     .param pmc a
-    $P0 = clone a
+    $P0 = a.'clone'()
     $I0 = defined a
     if $I0 goto have_a
     'infix:='(a, 0)
   have_a:
-    inc a
+    $P1 = a.'clone'()
+    inc $P1
+    'infix:='(a, $P1)
     .return ($P0)
 .end
 
 .sub 'postfix:--' :multi(_)
     .param pmc a
-    $P0 = clone a
+    $P0 = a.'clone'()
     $I0 = defined a
     if $I0 goto have_a
     'infix:='(a, 0)
   have_a:
-    dec a
+    $P1 = a.'clone'()
+    dec $P1
+    'infix:='(a, $P1)
     .return ($P0)
 .end
 
@@ -57,7 +61,9 @@ src/builtins/op.pir - Perl 6 builtin operators
     if $I0 goto have_a
     'infix:='(a, 0)
   have_a:
-    inc a
+    $P0 = a.'clone'()
+    inc $P0
+    'infix:='(a, $P0)
     .return (a)
 .end
 
@@ -68,7 +74,9 @@ src/builtins/op.pir - Perl 6 builtin operators
     if $I0 goto have_a
     'infix:='(a, 0)
   have_a:
-    dec a
+    $P0 = a.'clone'()
+    dec $P0
+    'infix:='(a, $P0)
     .return (a)
 .end
 

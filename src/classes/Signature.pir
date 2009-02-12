@@ -149,6 +149,27 @@ Ensures that if there is no explicit invocant, we add one.
 .end
 
 
+=item !make_parameters_rw
+
+Makes all parameters have readtype rw (used to implement e.g. <->).
+
+=cut
+
+.sub '!make_parameters_rw' :method
+    .local pmc params, it, param
+    params = self.'params'()
+    it = iter params
+  it_loop:
+    unless it goto it_loop_end
+    param = shift it
+    $P0 = param['readtype']
+    unless null $P0 goto it_loop
+    param['readtype'] = 'rw'
+    goto it_loop
+  it_loop_end:
+.end
+
+
 =item params
 
 Get the array of parameter describing hashes.
@@ -286,14 +307,19 @@ lexicals as needed and performing type checks.
     name = param['name']
     if name == 'self' goto param_loop
     sigil = substr name, 0, 1
-    .local pmc type, orig, var
+    .local pmc type, optional, orig, var
     type = param['type']
+    optional = param['optional']
     orig = callerlex[name]
     if sigil == '@' goto param_array
     if sigil == '%' goto param_hash
     if sigil != '$' goto param_sub
     var = '!CALLMETHOD'('Scalar', orig)
-    ##  typecheck the argument
+    ##  typecheck the argument unless it's undef (for optional parameter)
+    if null optional goto not_optional
+    $I0 = defined orig
+    unless $I0 goto param_val_done 
+  not_optional:
     if null type goto param_val_done
     .lex '$/', $P99
     $P0 = type.'ACCEPTS'(var)
