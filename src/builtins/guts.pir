@@ -312,8 +312,13 @@ first). So for now we just transform multis in user code like this.
 
   start_main:
     ## We're running as main program
-    ## Remove program argument (0) and set up @ARGS global
+
+    ## Remove program argument ($?PROGRAM) and set up @ARGS global
     $P0 = shift args
+    $P1 = get_hll_global [ "Bool" ], "True"
+    setprop $P0, "readonly", $P1
+    set_hll_global "$?PROGRAM", $P0
+
     args = args.'Array'()
     set_hll_global '@ARGS', args
     ## run unitmain

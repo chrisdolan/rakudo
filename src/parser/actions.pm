@@ -1972,6 +1972,12 @@ method variable($/, $key) {
             $var.viviself( container_itype($sigil) );
         }
 
+        # If it has a '?' twigil, it's a compiler hint var.
+        if $twigil eq '?' {
+            $var.namespace(@ns);
+            $var.scope('package');
+        }
+
         ## @_ and %_ add a slurpy param to the block
         if $varname eq '@_' || $varname eq '%_' {
             unless $?BLOCK.symbol($varname) {
