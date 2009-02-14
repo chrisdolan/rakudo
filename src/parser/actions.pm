@@ -214,12 +214,10 @@ method when_statement($/) {
     when_handler_helper($block);
 
     # Invoke smartmatch of the expression.
-    my $match_past := PAST::Op.new(
+    my $match_past := process_smartmatch(
         PAST::Var.new( :name('$_') ),
         $( $<EXPR> ),
-        :name('infix:~~'),
-        :pasttype('call'),
-        :node($/)
+        $<EXPR><expr>
     );
 
     # Use the smartmatch result as the condition.
@@ -335,12 +333,19 @@ method pblock($/) {
             ));
         }
     }
+    ##  If block has no statements, need to return an undef (so we don't
+    ##  get a null PMC access) if it's a lambda (in the non-lambda case,
+    ##  it may be a Hash composer).
+    if $<lambda> {
+        prevent_null_return($block);
+    }
     make $block;
 }
 
 method xblock($/) {
     my $pblock := $( $<pblock> );
     $pblock.blocktype('immediate');
+    prevent_null_return($pblock);
     my $past := PAST::Op.new(
         $( $<EXPR> ), $pblock,
         :pasttype('if'),
@@ -2501,6 +2506,13 @@ method EXPR($/, $key) {
         }
         make $past;
     }
+    elsif ~$type eq 'infix:~~' {
+        # Smart-match. We need to detect and specially dispatch a few special forms; the
+        # rest fall through to a call to .ACCEPTS.
+        my $lhs := $( $/[0] );
+        my $rhs := $( $/[1] );
+        make process_smartmatch($lhs, $rhs, $/[1]);
+    }
     elsif ~$type eq 'prefix:|' {
         # Need to make it flatten the argument.
         my $past := $( $/[0] );
@@ -2554,6 +2566,7 @@ method type_declarator($/) {
 
     # We need a block containing the constraint condition.
     my $past := $( $<EXPR> );
+    my $param_name := '$_';
     if (!$past.isa(PAST::Block) || $past.compiler() eq 'PGE::Perl6Regex') {
         # Make block with a smart match of the the expression as its contents.
         $past := PAST::Block.new(
@@ -2584,6 +2597,7 @@ method type_declarator($/) {
         if $_.isa(PAST::Var) {
             if $_.scope() eq 'parameter' {
                 $param := $_;
+                $param_name := $param.name();
             }
             elsif $_.name() eq '$_' {
                 $dollar_underscore := $_;
@@ -2602,6 +2616,18 @@ method type_declarator($/) {
             );
             $past[0].push($param);
         }
+    }
+
+    # If it doesn't have a signature, give it one.
+    unless $past<signature> {
+        block_signature($past);
+        $past.loadinit().push(PAST::Op.new(
+            :pasttype('callmethod'),
+            :name('!add_param'),
+            PAST::Var.new( :name('signature'), :scope('register') ),
+            $param_name
+        ));
+        $past[0].push(PAST::Op.new( :pasttype('call'), :name('!SIGNATURE_BIND') ));
     }
 
     # Create subset type.
@@ -2852,37 +2878,67 @@ sub make_accessor($/, $method_name, $attr_name, $rw, $scope) {
 
 # Creates an anonymous subset type.
 sub make_anon_subtype($past) {
-    # We need a block containing the constraint condition.
-    if !$past.isa(PAST::Block) {
+    my $param_name := '$_';
+
+    # We need a block containing the constraint condition and do smart-match
+    # it against $_.
+    if !$past.isa(PAST::Block) || $past.compiler() eq 'PGE::Perl6Regex' {
         $past := PAST::Block.new(
-            PAST::Stmts.new(),
-            PAST::Stmts.new( $past )
+            PAST::Stmts.new(
+                PAST::Var.new(
+                    :name('$_'),
+                    :scope('parameter')
+                )
+            ),
+            PAST::Stmts.new( 
+                PAST::Op.new(
+                    :name('infix:~~'),
+                    :pasttype('call'),
+                    PAST::Var.new( :name('$_'), :scope('lexical') ),
+                    $past
+                )
+            )
         );
     }
-
-    # Make sure it has a parameter.
-    my $param;
-    my $dollar_underscore;
-    for @($past[0]) {
-        if $_.isa(PAST::Var) {
-            if $_.scope() eq 'parameter' {
-                $param := $_;
+    else {
+        # Make the block we have has a parameter.
+        my $param;
+        my $dollar_underscore;
+        for @($past[0]) {
+            if $_.isa(PAST::Var) {
+                if $_.scope() eq 'parameter' {
+                    $param := $_;
+                    $param_name := $param.name();
+                }
+                elsif $_.name() eq '$_' {
+                    $dollar_underscore := $_;
+                }
             }
-            elsif $_.name() eq '$_' {
-                $dollar_underscore := $_;
+        }
+        unless $param {
+            if $dollar_underscore {
+                $dollar_underscore.scope('parameter');
+            }
+            else {
+                $past[0].push(PAST::Var.new(
+                    :name('$_'),
+                    :scope('parameter')
+                ));
             }
         }
     }
-    unless $param {
-        if $dollar_underscore {
-            $dollar_underscore.scope('parameter');
-        }
-        else {
-            $past[0].push(PAST::Var.new(
-                :name('$_'),
-                :scope('parameter')
-            ));
-        }
+
+    # Add signature to make sure parameter is read-only, unless block is
+    # already sig'd.
+    unless $past<signature> {
+        block_signature($past);
+        $past.loadinit().push(PAST::Op.new(
+            :pasttype('callmethod'),
+            :name('!add_param'),
+            PAST::Var.new( :name('signature'), :scope('register') ),
+            $param_name
+        ));
+        $past[0].push(PAST::Op.new( :pasttype('call'), :name('!SIGNATURE_BIND') ));
     }
 
     return $past;
@@ -2943,6 +2999,40 @@ sub transform_to_multi($past) {
             )
         );
         $past<multi_flag> := 1;
+    }
+}
+
+
+# Hanldes syntactic forms of smart-matching (factored out here since it's used
+# by infix:~~ and the when statement.
+sub process_smartmatch($lhs, $rhs, $rhs_pt) {
+    if $rhs_pt<noun><dotty> {
+        # Method truth - just call RHS.
+        $rhs<invocant_holder>[0] := $lhs;
+        return PAST::Op.new(
+            :pasttype('call'),
+            :name('prefix:?'),
+            $rhs
+        );
+    }
+    else {
+        return PAST::Op.new(
+            :pasttype('call'),
+            :name('infix:~~'),
+            $lhs, $rhs
+        );
+    }
+}
+
+
+# Gives a block an undef to return if it has no statements, to prevent Null
+# PMCs being handed back.
+sub prevent_null_return($block) {
+    if +@($block[1]) == 0 {
+        $block[1].push(PAST::Op.new(
+            :pasttype('call'),
+            :name('undef')
+        ));
     }
 }
 
