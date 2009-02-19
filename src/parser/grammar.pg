@@ -248,6 +248,7 @@ rule statement_control {
     | <end_statement> {*}                        #= end_statement
     | <catch_statement> {*}                      #= catch_statement
     | <control_statement> {*}                    #= control_statement
+    | <no_statement> {*}                         #= no_statement
 }
 
 rule if_statement {
@@ -259,7 +260,9 @@ rule if_statement {
 }
 
 rule unless_statement {
-    $<sym>=[unless] <xblock> {*}
+    $<sym>=[unless]
+    <xblock> {*}
+    [ <!before 'else'> || <.panic: "unless does not take \"else\" in Perl 6; please rewrite using \"if\""> ]
 }
 
 rule repeat_statement {
@@ -341,6 +344,10 @@ rule control_statement {
     $<sym>=[CONTROL]
     <block>
     {*}
+}
+
+rule no_statement {
+    'no' <module_name><arglist>? {*}
 }
 
 rule statement_mod_loop {
@@ -623,8 +630,9 @@ token named_0ary {
 }
 
 rule package_declarator {
-    $<sym>=[class|grammar|module|package|role] {*}       #= open
-    <package_def> {*}                                    #= package_def
+    | $<sym>=[class|grammar|module|package|role] {*}       #= open
+      <package_def> {*}                                    #= package_def
+    | 'does' <typename> {*}                                #= does
 }
 
 
@@ -757,10 +765,13 @@ token name {
 
 token morename {
     '::'
-    [ 
-    | <identifier>
-    | '(' <EXPR> ')' 
-    ]
+    [
+        <?before '(' | <alpha> >
+        [ 
+        | <identifier>
+        | '(' <EXPR> ')' 
+        ]
+    ]?
 }
 
 token value {

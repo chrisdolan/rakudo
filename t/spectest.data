@@ -10,7 +10,6 @@
 # 
 # S03-operators/binding-arrays.t - regressed to allow slices
 # S03-operators/binding-hashes.t - regressed to allow slices
-# integration/man-or-boy.t - regressed for rvar branch (broke "is copy")
 
 integration/99problems-01-to-10.t
 integration/99problems-11-to-20.t
@@ -21,7 +20,10 @@ integration/99problems-51-to-60.t
 integration/99problems-61-to-70.t
 integration/lexical-array-in-inner-block.t
 integration/lexicals-and-attributes.t
+integration/man-or-boy.t
 integration/method-calls-and-instantiation.t
+integration/pair-in-array.t
+integration/passing-pair-class-to-sub.t
 integration/real-strings.t
 integration/say-crash.t
 integration/substr-after-match-in-gather-in-for.t
@@ -264,6 +266,7 @@ S29-array/pop.t
 S29-array/push.t
 S29-array/shift.t
 S29-array/unshift.t
+S29-container/zip.t
 S29-context/eval.t
 S29-context/sleep.t
 S29-conversions/ord_and_chr.t

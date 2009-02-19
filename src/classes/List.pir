@@ -35,9 +35,10 @@ Smart-matches against the list.
     # What do we have?
     $I0 = isa topic, 'List' # Catches Array too
     if $I0 goto array
-    goto default
+    # XXX When we have a Set type, need to handle that here too.
+    topic = topic.'list'()
 
-    # Array. Need to DWIM on *s.
+    # Need to DWIM on *s.
   array:
     .local pmc whatever
     whatever = get_hll_global 'Whatever'
@@ -63,6 +64,8 @@ Smart-matches against the list.
     unless it_a goto true
     .local pmc looking_for
     looking_for = shift it_a
+    $I0 = isa looking_for, whatever
+    if $I0 goto handle_whatever
   whatever_loop:
     $P0 = 'infix:==='(looking_for, cur_b)
     if $P0 goto found_looking_for
@@ -96,13 +99,6 @@ Smart-matches against the list.
   false:
     $P0 = get_hll_global [ 'Bool' ], 'False'
     .return ($P0)
-
-    # Something else. Just do a hyper ===, and check all the values are matches.
-  default:
-    topic = topic.'list'()
-    $P0 = '!HYPEROP'('infix:===', self, topic, 0, 0)
-    $P0 = 'all'($P0)
-    .tailcall 'prefix:?'($P0)
 .end
 
 
@@ -207,36 +203,6 @@ Return the number of elements in the list.
     self.'!flatten'()
     $I0 = elements self
     .return ($I0)
-.end
-
-=item perl()
-
-Returns a Perl representation of a List.
-
-=cut
-
-.sub 'perl' :method
-    .local string result
-    result = '['
-
-    .local pmc iter
-    iter = self.'iterator'()
-    unless iter goto iter_done
-  iter_loop:
-    $P1 = shift iter
-    if null $P1 goto iter_null
-    $S1 = $P1.'perl'()
-    result .= $S1
-    goto iter_next
-  iter_null:
-    result .= 'undef'
-  iter_next:
-    unless iter goto iter_done
-    result .= ', '
-    goto iter_loop
-  iter_done:
-    result .= ']'
-    .return (result)
 .end
 
 

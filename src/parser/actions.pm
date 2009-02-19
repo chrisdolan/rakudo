@@ -26,42 +26,50 @@ method TOP($/) {
     # Set package for unit mainline
     $past.unshift(set_package_magical());
 
-    # Create the unit's startup block.
-    my $main := PAST::Block.new( :pirflags(':main') );
-    $main.loadinit().push(
-        PAST::Op.new( :inline('$P0 = compreg "Perl6"',
-                              'unless null $P0 goto have_perl6',
-                              'load_bytecode "perl6.pbc"',
-                              'have_perl6:')
-        )
-    );
+    # Create the unit's startup block, unless it's suppressed.
+    our $?SUPPRESS_MAIN;
+    my $main;
+    if $?SUPPRESS_MAIN {
+        $past.push(PAST::Stmts.new());
+        $main := $past;
+    }
+    else {
+        $main := PAST::Block.new( :pirflags(':main') );
+        $main.loadinit().push(
+            PAST::Op.new( :inline('$P0 = compreg "Perl6"',
+                                  'unless null $P0 goto have_perl6',
+                                  'load_bytecode "perl6.pbc"',
+                                  'have_perl6:')
+            )
+        );
 
-   # call the unit mainline, passing any arguments, and return
-   # the result.  We force a tailcall here because we need a
-   # :load sub (below) to occur last in the generated output, but don't
-   # want it to be treated as the module's return value.
-   $main.push(
-       PAST::Op.new( :pirop('tailcall'),
-           PAST::Op.new( :pirop('find_name'), '!UNIT_START' ),
-           $past,
-           PAST::Var.new( :scope('parameter'), :name('@_'), :slurpy(1) )
-       )
-    );
+       # call the unit mainline, passing any arguments, and return
+       # the result.  We force a tailcall here because we need a
+       # :load sub (below) to occur last in the generated output, but don't
+       # want it to be treated as the module's return value.
+       $main.push(
+           PAST::Op.new( :pirop('tailcall'),
+               PAST::Op.new( :pirop('find_name'), '!UNIT_START' ),
+               $past,
+               PAST::Var.new( :scope('parameter'), :name('@_'), :slurpy(1) )
+           )
+        );
 
-    # generate a :load sub that invokes this one, but does so _last_
-    # (e.g., at the end of a load_bytecode operation)
-    $main.push(
-        PAST::Block.new( :pirflags(':load'), :blocktype('declaration'),
-            PAST::Op.new(
-                :inline( '.include "interpinfo.pasm"',
-                         '$P0 = interpinfo .INTERPINFO_CURRENT_SUB',
-                         '$P0 = $P0."get_outer"()',
-                         '$P0()'
+        # generate a :load sub that invokes this one, but does so _last_
+        # (e.g., at the end of a load_bytecode operation)
+        $main.push(
+            PAST::Block.new( :pirflags(':load'), :blocktype('declaration'),
+                PAST::Op.new(
+                    :inline( '.include "interpinfo.pasm"',
+                             '$P0 = interpinfo .INTERPINFO_CURRENT_SUB',
+                             '$P0 = $P0."get_outer"()',
+                             '$P0()'
+                    )
                 )
             )
-        )
-    );
-    $main.push( PAST::Stmts.new() );
+        );
+        $main.push( PAST::Stmts.new() );
+    }
 
     make $main;
 }
@@ -214,12 +222,10 @@ method when_statement($/) {
     when_handler_helper($block);
 
     # Invoke smartmatch of the expression.
-    my $match_past := PAST::Op.new(
+    my $match_past := process_smartmatch(
         PAST::Var.new( :name('$_') ),
         $( $<EXPR> ),
-        :name('infix:~~'),
-        :pasttype('call'),
-        :node($/)
+        $<EXPR><expr>
     );
 
     # Use the smartmatch result as the condition.
@@ -335,12 +341,19 @@ method pblock($/) {
             ));
         }
     }
+    ##  If block has no statements, need to return an undef (so we don't
+    ##  get a null PMC access) if it's a lambda (in the non-lambda case,
+    ##  it may be a Hash composer).
+    if $<lambda> {
+        prevent_null_return($block);
+    }
     make $block;
 }
 
 method xblock($/) {
     my $pblock := $( $<pblock> );
     $pblock.blocktype('immediate');
+    prevent_null_return($pblock);
     my $past := PAST::Op.new(
         $( $<EXPR> ), $pblock,
         :pasttype('if'),
@@ -462,6 +475,15 @@ method control_statement($/) {
     $?BLOCK.handlers(@handlers);
     make PAST::Stmts.new();
 }
+
+
+method no_statement($/) {
+    if ~$<module_name><name> eq 'Main' {
+        our $?SUPPRESS_MAIN := 1;
+    }
+    make PAST::Stmts.new();
+}
+
 
 method statement_mod_loop($/) {
     my $expr := $( $<EXPR> );
@@ -1533,9 +1555,26 @@ method package_declarator($/, $key) {
         $?BLOCK_OPEN<pkgdecl> := $sym;
         @?PKGDECL.unshift( $sym );
     }
-    else {
+    elsif $key eq 'package_def' {
         make $( $<package_def> );
         @?PKGDECL.shift();
+    }
+    elsif $key eq 'does' {
+        our @?BLOCK;
+        our $?METACLASS;
+        my $block    := @?BLOCK[0];
+        my $pkgdecl  := $block<pkgdecl>;
+        my $typename := ~$<typename><name>;
+        unless $pkgdecl eq 'class' || $pkgdecl eq 'role' || $pkgdecl eq 'grammar' {
+            $/.panic("Cannot use does package declarator outside of class, role, or grammar");
+        }
+        $block[0].push(PAST::Op.new(
+            :name('!meta_trait'),
+            $?METACLASS,
+            'trait_auxiliary:does',
+            $typename
+        ));
+        make PAST::Stmts.new()
     }
 }
 
@@ -1552,7 +1591,8 @@ method package_def($/, $key) {
     # At block opening, unshift module name (fully qualified) onto @?NS; otherwise,
     # shift it off.
     if $key eq 'open' {
-        my $fqname := +@?NS ?? @?NS[0] ~ '::' ~ ~$<module_name>[0] !! ~$<module_name>[0];
+        my $add := ~$<module_name>[0] eq '::' ?? '' !! ~$<module_name>[0];
+        my $fqname := +@?NS ?? @?NS[0] ~ '::' ~ $add !! $add;
         @?NS.unshift($fqname);
         return 0;
     }
@@ -1563,9 +1603,15 @@ method package_def($/, $key) {
     my $block := $( $/{$key} );
     $block.lexical(0);
 
-    my $modulename := $<module_name>
-                         ?? ~$<module_name>[0] !!
-                         $block.unique('!ANON');
+    my $modulename;
+    my $is_anon := 0;
+    if $<module_name> && ~$<module_name>[0] ne '::' {
+        $modulename :=  ~$<module_name>[0];
+    }
+    else {
+        $modulename := $block.unique('!ANON');
+        $is_anon := 1;
+    }
     if +@?NS > 0 {
         $modulename := @?NS[0] ~ '::' ~ $modulename;
     }
@@ -1650,7 +1696,7 @@ method package_def($/, $key) {
 
     #  If it's not an "is also", have a name and aren't a role (since they can
     #  have many declarations) we need to check it's not a duplicate.
-    if !$block<isalso> && $<module_name> && $?PKGDECL ne 'role' {
+    if !$block<isalso> && !$is_anon && $?PKGDECL ne 'role' {
         if $/.type_redeclaration() {
             $/.panic("Re-declaration of type " ~ ~$<module_name>[0]);
         }
@@ -1700,7 +1746,7 @@ method package_def($/, $key) {
             $?METACLASS
         ));
     }
-    elsif $<module_name> eq "" && ($?PKGDECL eq 'class' || $?PKGDECL eq 'grammar') {
+    elsif $is_anon && ($?PKGDECL eq 'class' || $?PKGDECL eq 'grammar') {
         #  We need to keep the proto around and return it at the end of
         #  initialization for anonymous classes.
         $block[0].push(PAST::Op.new(
@@ -1712,7 +1758,7 @@ method package_def($/, $key) {
         $block.blocktype('immediate');
         $block.pirflags('');
     }
-    else {
+    elsif !$block<isalso> {
         $block[0].push( PAST::Op.new( :name('!meta_compose'), $?METACLASS) );
     }
 
@@ -2501,6 +2547,13 @@ method EXPR($/, $key) {
         }
         make $past;
     }
+    elsif ~$type eq 'infix:~~' {
+        # Smart-match. We need to detect and specially dispatch a few special forms; the
+        # rest fall through to a call to .ACCEPTS.
+        my $lhs := $( $/[0] );
+        my $rhs := $( $/[1] );
+        make process_smartmatch($lhs, $rhs, $/[1]);
+    }
     elsif ~$type eq 'prefix:|' {
         # Need to make it flatten the argument.
         my $past := $( $/[0] );
@@ -2554,6 +2607,7 @@ method type_declarator($/) {
 
     # We need a block containing the constraint condition.
     my $past := $( $<EXPR> );
+    my $param_name := '$_';
     if (!$past.isa(PAST::Block) || $past.compiler() eq 'PGE::Perl6Regex') {
         # Make block with a smart match of the the expression as its contents.
         $past := PAST::Block.new(
@@ -2584,6 +2638,7 @@ method type_declarator($/) {
         if $_.isa(PAST::Var) {
             if $_.scope() eq 'parameter' {
                 $param := $_;
+                $param_name := $param.name();
             }
             elsif $_.name() eq '$_' {
                 $dollar_underscore := $_;
@@ -2602,6 +2657,18 @@ method type_declarator($/) {
             );
             $past[0].push($param);
         }
+    }
+
+    # If it doesn't have a signature, give it one.
+    unless $past<signature> {
+        block_signature($past);
+        $past.loadinit().push(PAST::Op.new(
+            :pasttype('callmethod'),
+            :name('!add_param'),
+            PAST::Var.new( :name('signature'), :scope('register') ),
+            $param_name
+        ));
+        $past[0].push(PAST::Op.new( :pasttype('call'), :name('!SIGNATURE_BIND') ));
     }
 
     # Create subset type.
@@ -2852,37 +2919,67 @@ sub make_accessor($/, $method_name, $attr_name, $rw, $scope) {
 
 # Creates an anonymous subset type.
 sub make_anon_subtype($past) {
-    # We need a block containing the constraint condition.
-    if !$past.isa(PAST::Block) {
+    my $param_name := '$_';
+
+    # We need a block containing the constraint condition and do smart-match
+    # it against $_.
+    if !$past.isa(PAST::Block) || $past.compiler() eq 'PGE::Perl6Regex' {
         $past := PAST::Block.new(
-            PAST::Stmts.new(),
-            PAST::Stmts.new( $past )
+            PAST::Stmts.new(
+                PAST::Var.new(
+                    :name('$_'),
+                    :scope('parameter')
+                )
+            ),
+            PAST::Stmts.new( 
+                PAST::Op.new(
+                    :name('infix:~~'),
+                    :pasttype('call'),
+                    PAST::Var.new( :name('$_'), :scope('lexical') ),
+                    $past
+                )
+            )
         );
     }
-
-    # Make sure it has a parameter.
-    my $param;
-    my $dollar_underscore;
-    for @($past[0]) {
-        if $_.isa(PAST::Var) {
-            if $_.scope() eq 'parameter' {
-                $param := $_;
+    else {
+        # Make the block we have has a parameter.
+        my $param;
+        my $dollar_underscore;
+        for @($past[0]) {
+            if $_.isa(PAST::Var) {
+                if $_.scope() eq 'parameter' {
+                    $param := $_;
+                    $param_name := $param.name();
+                }
+                elsif $_.name() eq '$_' {
+                    $dollar_underscore := $_;
+                }
             }
-            elsif $_.name() eq '$_' {
-                $dollar_underscore := $_;
+        }
+        unless $param {
+            if $dollar_underscore {
+                $dollar_underscore.scope('parameter');
+            }
+            else {
+                $past[0].push(PAST::Var.new(
+                    :name('$_'),
+                    :scope('parameter')
+                ));
             }
         }
     }
-    unless $param {
-        if $dollar_underscore {
-            $dollar_underscore.scope('parameter');
-        }
-        else {
-            $past[0].push(PAST::Var.new(
-                :name('$_'),
-                :scope('parameter')
-            ));
-        }
+
+    # Add signature to make sure parameter is read-only, unless block is
+    # already sig'd.
+    unless $past<signature> {
+        block_signature($past);
+        $past.loadinit().push(PAST::Op.new(
+            :pasttype('callmethod'),
+            :name('!add_param'),
+            PAST::Var.new( :name('signature'), :scope('register') ),
+            $param_name
+        ));
+        $past[0].push(PAST::Op.new( :pasttype('call'), :name('!SIGNATURE_BIND') ));
     }
 
     return $past;
@@ -2943,6 +3040,40 @@ sub transform_to_multi($past) {
             )
         );
         $past<multi_flag> := 1;
+    }
+}
+
+
+# Hanldes syntactic forms of smart-matching (factored out here since it's used
+# by infix:~~ and the when statement.
+sub process_smartmatch($lhs, $rhs, $rhs_pt) {
+    if $rhs_pt<noun><dotty> {
+        # Method truth - just call RHS.
+        $rhs<invocant_holder>[0] := $lhs;
+        return PAST::Op.new(
+            :pasttype('call'),
+            :name('prefix:?'),
+            $rhs
+        );
+    }
+    else {
+        return PAST::Op.new(
+            :pasttype('call'),
+            :name('infix:~~'),
+            $lhs, $rhs
+        );
+    }
+}
+
+
+# Gives a block an undef to return if it has no statements, to prevent Null
+# PMCs being handed back.
+sub prevent_null_return($block) {
+    if +@($block[1]) == 0 {
+        $block[1].push(PAST::Op.new(
+            :pasttype('call'),
+            :name('undef')
+        ));
     }
 }
 
