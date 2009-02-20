@@ -18,6 +18,7 @@ integration/99problems-31-to-40.t
 integration/99problems-41-to-50.t
 integration/99problems-51-to-60.t
 integration/99problems-61-to-70.t
+integration/code-blocks-as-sub-args.t
 integration/lexical-array-in-inner-block.t
 integration/lexicals-and-attributes.t
 integration/man-or-boy.t
@@ -77,6 +78,8 @@ S02-whitespace_and_comments/pod-in-multi-line-exprs.t
 S02-whitespace_and_comments/unicode-whitespace.t
 S03-junctions/autothreading.t
 S03-junctions/boolean-context.t
+S03-junctions/chained-operators.t
+S03-junctions/eigenstates.t
 S03-junctions/misc.t
 S03-operators/arith.t
 S03-operators/assign-is-not-binding.t
@@ -162,6 +165,7 @@ S05-metachars/newline.t
 S05-metachars/tilde.t
 S05-metasyntax/changed.t
 S05-metasyntax/charset.t
+S05-metasyntax/lookaround.t
 S05-metasyntax/regex.t
 S05-metasyntax/single-quotes.t
 S05-metasyntax/unknown.t
@@ -234,6 +238,7 @@ S12-methods/multi.t
 S12-methods/private.t
 S12-methods/syntax.t
 S12-methods/topic.t
+S12-methods/typed-attributes.t
 S12-methods/what.t
 S12-role/attributes.t
 S12-role/basic.t
@@ -256,6 +261,7 @@ S16-io/basic-open.t
 S16-io/say.t
 S16-unfiled/slurp.t
 S29-any/cmp.t
+S29-any/isa.t
 S29-array/delete.t
 S29-array/elems.t
 S29-array/exists.t
@@ -293,6 +299,7 @@ S29-num/exp.t
 S29-num/int.t
 S29-num/log.t
 S29-num/pi.t
+S29-num/polar.t
 S29-num/rand.t
 S29-num/rounders.t
 S29-num/sign.t
