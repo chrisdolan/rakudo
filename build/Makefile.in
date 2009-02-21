@@ -108,8 +108,10 @@ BUILTINS_PIR = \
 SETTING = \
   src/setting/Array.pm \
   src/setting/Bool.pm \
+  src/setting/Hash.pm \
   src/setting/List.pm \
   src/setting/Pair.pm \
+  src/setting/Str.pm \
   src/setting/Whatever.pm \
 
 PMCS        = perl6str objectref perl6scalar mutablevar perl6multisub
@@ -126,6 +128,7 @@ CLEANUPS = \
   *.pdb \
   perl6$(O) \
   perl6$(EXE) \
+  perl6_s1.pbc \
   installable_perl6$(EXE) \
   Test.pir \
   src/gen_*.pir \
