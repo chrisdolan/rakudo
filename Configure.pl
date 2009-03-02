@@ -9,11 +9,13 @@ use 5.008;
 my %valid_options = (
     'help'          => 'Display configuration help',
     'parrot-config' => 'Use configuration given by parrot_config binary',
+    'gen-parrot'    => 'Automatically retrieve and build Parrot',
 );
 
 
 #  Get any options from the command line
 my %options = get_command_options();
+
 
 #  Print help if it's requested
 if ($options{'help'}) {
@@ -21,22 +23,16 @@ if ($options{'help'}) {
     exit(0);
 }
 
-#  Work out slash character to use.
-my $slash = $^O eq 'MSWin32' ? '\\' : '/';
 
-#  If we're in a Parrot build tree and --parrot-config isn't
-#  specified, use the build tree's reconfigure.pl and exit.
-# if (!$options{'parrot-config'} && -e "../../tools/dev/reconfigure.pl") {
-#     print "Building Makefile with ../../tools/dev/reconfigure.pl\n";
-#     chdir '../..';
-#     `$^X -Ilib tools/dev/reconfigure.pl --step=gen::languages --languages=rakudo`;
-#     done();
-# }
-
+#  Update/generate parrot build if needed
+if ($options{'gen-parrot'}) {
+    system("$^X build/gen_parrot.pl");
+}
+    
 
 #  Get a list of parrot-configs to invoke.
-my @parrot_config_exe = 
-    ("parrot${slash}parrot_config", "parrot_config", "..${slash}..${slash}parrot_config");
+my @parrot_config_exe = ("parrot/parrot_config", 
+     "../../parrot_config", "parrot_config");
 if ($options{'parrot-config'} && $options{'parrot-config'} ne '1') {
     @parrot_config_exe = ($options{'parrot-config'});
 }
@@ -44,8 +40,13 @@ if ($options{'parrot-config'} && $options{'parrot-config'} ne '1') {
 #  Get configuration information from parrot_config
 my %config = read_parrot_config(@parrot_config_exe);
 unless (%config) {
-    die "Unable to obtain configuration from "
-        . join(', ', @parrot_config_exe) . "\n";
+    die <<"END";
+Unable to locate parrot_config.
+To automatically checkout (svn) and build a copy of parrot,
+try re-running Configure.pl with the '--gen-parrot' option.
+Or, use the '--parrot-config' option to explicitly specify
+the location of parrot_config.
+END
 }
 
 #  Create the Makefile using the information we just got
@@ -96,8 +97,9 @@ sub create_makefile {
         die "Unable to read build/Makefile.in \n";
     my $maketext = join('', <$ROOTIN>);
     close $ROOTIN;
-    $maketext =~ s/@(\w+)@/$config{$1}/g;
 
+    $config{'win32_libparrot_copy'} = $^O eq 'MSWin32' ? 'copy $(BUILD_DIR)\libparrot.dll .' : '';
+    $maketext =~ s/@(\w+)@/$config{$1}/g;
     if ($^O eq 'MSWin32') {
         $maketext =~ s{/}{\\}g;
     }
@@ -111,11 +113,12 @@ sub create_makefile {
 
 
 sub done {
-    print <<END;
+    my $make = $config{'make'};
+    print <<"END";
 
-You can now use 'make' to build Rakudo Perl.
-After that, you can use 'make test' to run some local tests,
-or 'make spectest' to check out (via svn) a copy of the Perl 6
+You can now use '$make' to build Rakudo Perl.
+After that, you can use '$make test' to run some local tests,
+or '$make spectest' to check out (via svn) a copy of the Perl 6
 official test suite and run its tests.
 
 END
@@ -130,6 +133,7 @@ Configure.pl - Rakudo Configure
 
 General Options:
     --help             Show this text
+    --gen-parrot       Download and build a copy of Parrot to use
     --parrot-config=(config)
                        Use configuration information from config
 

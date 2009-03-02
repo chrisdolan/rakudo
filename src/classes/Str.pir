@@ -1,5 +1,3 @@
-## $Id$
-
 =head1 TITLE
 
 Str - Perl 6 Str class and related functions
@@ -28,7 +26,7 @@ as the Perl 6 C<Str> class.
     p6meta.'register'('String', 'parent'=>strproto, 'protoobject'=>strproto)
 
     $P0 = get_hll_namespace ['Str']
-    '!EXPORT'('sprintf,reverse', 'from'=>$P0)
+    '!EXPORT'('sprintf', 'from'=>$P0)
 .end
 
 
@@ -47,18 +45,6 @@ as the Perl 6 C<Str> class.
     .param string topic
     .tailcall 'infix:eq'(topic, self)
 .end
-
-
-.sub 'reverse' :method :multi('String')
-    .local pmc retv
-
-    retv = self.'split'('')
-    retv = retv.'reverse'()
-    retv = retv.'join'('')
-
-    .return(retv)
-.end
-
 
 
 =item perl()
@@ -194,18 +180,6 @@ chopped.
 Related to C<p5chop>, only removes trailing chars that match C</\n/>. In
 either case, it returns the number of chars removed.
 
-=item chomp
-
- our Str method Str::chomp ( Str $string: )
-
-Returns string with newline removed from the end.  An arbitrary
-terminator can be removed if the input filehandle has marked the
-string for where the "newline" begins.  (Presumably this is stored
-as a property of the string.)  Otherwise a standard newline is removed.
-
-Note: Most users should just let their I/O handles autochomp instead.
-(Autochomping is the default.)
-
 =item length
 
 This word is banned in Perl 6.  You must specify units.
@@ -215,8 +189,6 @@ This word is banned in Perl 6.  You must specify units.
 Needs to be in terms of StrPos, not Int.
 
 =item pack
-
-=item pos
 
 =item quotemeta
 

@@ -6,9 +6,11 @@ perl6.pir - The Rakudo Perl 6 compiler.
 
 This is the base file for the Rakudo Perl 6 compiler.
 
-This file includes the parsing and grammar rules from
-the src/ directory, loads the relevant PGE libraries,
-and registers the compiler under the name 'Perl6'.
+=cut
+
+.loadlib 'perl6_group'
+.loadlib 'perl6_ops'
+.include 'src/gen_builtins.pir'
 
 =head2 Functions
 
@@ -19,10 +21,6 @@ and registers the compiler under the name 'Perl6'.
 Creates the Perl 6 compiler by subclassing a C<PCT::HLLCompiler> object.
 
 =cut
-
-.loadlib 'perl6_group'
-.loadlib 'perl6_ops'
-.include 'src/gen_builtins.pir'
 
 .namespace [ 'Perl6';'Compiler' ]
 
@@ -155,6 +153,11 @@ to the Perl 6 compiler.
 .sub 'main' :main
     .param pmc args_str
 
+    $S0 = args_str[1]
+    if $S0 != '-le' goto not_harness
+    exit 0
+  not_harness:
+
     $P0 = compreg 'Perl6'
     $P1 = $P0.'command_line'(args_str, 'encoding'=>'utf8', 'transcode'=>'ascii')
 
@@ -215,7 +218,11 @@ to the Perl 6 compiler.
     .return (list)
 .end
 
+=back
 
+=cut
+
+.include 'src/gen_setting.pir'
 .include 'src/gen_grammar.pir'
 .include 'src/parser/expression.pir'
 .include 'src/parser/methods.pir'
@@ -223,11 +230,6 @@ to the Perl 6 compiler.
 .include 'src/gen_actions.pir'
 .include 'src/gen_metaop.pir'
 .include 'src/gen_junction.pir'
-
-
-=back
-
-=cut
 
 # Local Variables:
 #   mode: pir

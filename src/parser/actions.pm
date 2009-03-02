@@ -26,42 +26,50 @@ method TOP($/) {
     # Set package for unit mainline
     $past.unshift(set_package_magical());
 
-    # Create the unit's startup block.
-    my $main := PAST::Block.new( :pirflags(':main') );
-    $main.loadinit().push(
-        PAST::Op.new( :inline('$P0 = compreg "Perl6"',
-                              'unless null $P0 goto have_perl6',
-                              'load_bytecode "perl6.pbc"',
-                              'have_perl6:')
-        )
-    );
+    # Create the unit's startup block, unless it's suppressed.
+    our $?SUPPRESS_MAIN;
+    my $main;
+    if $?SUPPRESS_MAIN {
+        $past.push(PAST::Stmts.new());
+        $main := $past;
+    }
+    else {
+        $main := PAST::Block.new( :pirflags(':main') );
+        $main.loadinit().push(
+            PAST::Op.new( :inline('$P0 = compreg "Perl6"',
+                                  'unless null $P0 goto have_perl6',
+                                  'load_bytecode "perl6.pbc"',
+                                  'have_perl6:')
+            )
+        );
 
-   # call the unit mainline, passing any arguments, and return
-   # the result.  We force a tailcall here because we need a
-   # :load sub (below) to occur last in the generated output, but don't
-   # want it to be treated as the module's return value.
-   $main.push(
-       PAST::Op.new( :pirop('tailcall'),
-           PAST::Op.new( :pirop('find_name'), '!UNIT_START' ),
-           $past,
-           PAST::Var.new( :scope('parameter'), :name('@_'), :slurpy(1) )
-       )
-    );
+       # call the unit mainline, passing any arguments, and return
+       # the result.  We force a tailcall here because we need a
+       # :load sub (below) to occur last in the generated output, but don't
+       # want it to be treated as the module's return value.
+       $main.push(
+           PAST::Op.new( :pirop('tailcall'),
+               PAST::Op.new( :pirop('find_name'), '!UNIT_START' ),
+               $past,
+               PAST::Var.new( :scope('parameter'), :name('@_'), :slurpy(1) )
+           )
+        );
 
-    # generate a :load sub that invokes this one, but does so _last_
-    # (e.g., at the end of a load_bytecode operation)
-    $main.push(
-        PAST::Block.new( :pirflags(':load'), :blocktype('declaration'),
-            PAST::Op.new(
-                :inline( '.include "interpinfo.pasm"',
-                         '$P0 = interpinfo .INTERPINFO_CURRENT_SUB',
-                         '$P0 = $P0."get_outer"()',
-                         '$P0()'
+        # generate a :load sub that invokes this one, but does so _last_
+        # (e.g., at the end of a load_bytecode operation)
+        $main.push(
+            PAST::Block.new( :pirflags(':load'), :blocktype('declaration'),
+                PAST::Op.new(
+                    :inline( '.include "interpinfo.pasm"',
+                             '$P0 = interpinfo .INTERPINFO_CURRENT_SUB',
+                             '$P0 = $P0."get_outer"()',
+                             '$P0()'
+                    )
                 )
             )
-        )
-    );
-    $main.push( PAST::Stmts.new() );
+        );
+        $main.push( PAST::Stmts.new() );
+    }
 
     make $main;
 }
@@ -467,6 +475,15 @@ method control_statement($/) {
     $?BLOCK.handlers(@handlers);
     make PAST::Stmts.new();
 }
+
+
+method no_statement($/) {
+    if ~$<module_name><name> eq 'Main' {
+        our $?SUPPRESS_MAIN := 1;
+    }
+    make PAST::Stmts.new();
+}
+
 
 method statement_mod_loop($/) {
     my $expr := $( $<EXPR> );
@@ -1538,9 +1555,26 @@ method package_declarator($/, $key) {
         $?BLOCK_OPEN<pkgdecl> := $sym;
         @?PKGDECL.unshift( $sym );
     }
-    else {
+    elsif $key eq 'package_def' {
         make $( $<package_def> );
         @?PKGDECL.shift();
+    }
+    elsif $key eq 'does' {
+        our @?BLOCK;
+        our $?METACLASS;
+        my $block    := @?BLOCK[0];
+        my $pkgdecl  := $block<pkgdecl>;
+        my $typename := ~$<typename><name>;
+        unless $pkgdecl eq 'class' || $pkgdecl eq 'role' || $pkgdecl eq 'grammar' {
+            $/.panic("Cannot use does package declarator outside of class, role, or grammar");
+        }
+        $block[0].push(PAST::Op.new(
+            :name('!meta_trait'),
+            $?METACLASS,
+            'trait_auxiliary:does',
+            $typename
+        ));
+        make PAST::Stmts.new()
     }
 }
 
@@ -1557,7 +1591,8 @@ method package_def($/, $key) {
     # At block opening, unshift module name (fully qualified) onto @?NS; otherwise,
     # shift it off.
     if $key eq 'open' {
-        my $fqname := +@?NS ?? @?NS[0] ~ '::' ~ ~$<module_name>[0] !! ~$<module_name>[0];
+        my $add := ~$<module_name>[0] eq '::' ?? '' !! ~$<module_name>[0];
+        my $fqname := +@?NS ?? @?NS[0] ~ '::' ~ $add !! $add;
         @?NS.unshift($fqname);
         return 0;
     }
@@ -1568,9 +1603,15 @@ method package_def($/, $key) {
     my $block := $( $/{$key} );
     $block.lexical(0);
 
-    my $modulename := $<module_name>
-                         ?? ~$<module_name>[0] !!
-                         $block.unique('!ANON');
+    my $modulename;
+    my $is_anon := 0;
+    if $<module_name> && ~$<module_name>[0] ne '::' {
+        $modulename :=  ~$<module_name>[0];
+    }
+    else {
+        $modulename := $block.unique('!ANON');
+        $is_anon := 1;
+    }
     if +@?NS > 0 {
         $modulename := @?NS[0] ~ '::' ~ $modulename;
     }
@@ -1655,7 +1696,7 @@ method package_def($/, $key) {
 
     #  If it's not an "is also", have a name and aren't a role (since they can
     #  have many declarations) we need to check it's not a duplicate.
-    if !$block<isalso> && $<module_name> && $?PKGDECL ne 'role' {
+    if !$block<isalso> && !$is_anon && $?PKGDECL ne 'role' {
         if $/.type_redeclaration() {
             $/.panic("Re-declaration of type " ~ ~$<module_name>[0]);
         }
@@ -1705,7 +1746,7 @@ method package_def($/, $key) {
             $?METACLASS
         ));
     }
-    elsif $<module_name> eq "" && ($?PKGDECL eq 'class' || $?PKGDECL eq 'grammar') {
+    elsif $is_anon && ($?PKGDECL eq 'class' || $?PKGDECL eq 'grammar') {
         #  We need to keep the proto around and return it at the end of
         #  initialization for anonymous classes.
         $block[0].push(PAST::Op.new(
@@ -1717,7 +1758,7 @@ method package_def($/, $key) {
         $block.blocktype('immediate');
         $block.pirflags('');
     }
-    else {
+    elsif !$block<isalso> {
         $block[0].push( PAST::Op.new( :name('!meta_compose'), $?METACLASS) );
     }
 
